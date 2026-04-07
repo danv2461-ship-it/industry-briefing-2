@@ -1,0 +1,41 @@
+name: Daily Industry Briefing
+
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"   # 평일 08:00 ET
+  workflow_dispatch:
+
+permissions:
+  contents: write  # GitHub Pages 배포를 위해 필요
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Run briefing
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+        run: python briefing.py
+
+      - name: Commit & push data
+        run: |
+          git config user.name "briefing-bot"
+          git config user.email "bot@briefing"
+          git add docs/
+          git diff --staged --quiet || git commit -m "briefing: $(date +%Y-%m-%d)"
+          git push

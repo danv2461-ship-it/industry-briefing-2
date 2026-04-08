@@ -1,11 +1,9 @@
 """
-Industry Intelligence Briefing v2
-- News collection via Claude Web Search
-- English + Korean summaries per institution
-- Topic clustering per institution
-- Korean 2-person podcast script
-- Google TTS audio synthesis
-- Outputs JSON + MP3 → GitHub Pages dashboard
+Industry Intelligence Briefing v2.3
+- English only podcast + dashboard
+- 7-day news window
+- By topic (Open Banking, Stablecoin, AI, etc.)
+- Plain text summaries (no markdown)
 """
 
 import os, re, json, time, base64, requests
@@ -14,405 +12,283 @@ from anthropic import Anthropic
 from pydub import AudioSegment
 from io import BytesIO
 
-# ── CONFIG (수정하세요) ────────────────────────────────────────────────────────
+# ── CONFIG ────────────────────────────────────────────────────────────────────
 
 INDUSTRY = "Canadian Banking & Fintech"
 
-INSTITUTIONS = [
-    {"id": "rbc",        "name": "RBC",        "query": "RBC Royal Bank Canada news"},
-    {"id": "td",         "name": "TD",          "query": "TD Bank Canada news"},
-    {"id": "bmo",        "name": "BMO",         "query": "BMO Bank of Montreal news"},
-    {"id": "scotiabank", "name": "Scotiabank",  "query": "Scotiabank Canada news"},
-    {"id": "osfi",       "name": "OSFI",        "query": "OSFI Canada banking regulation news"},
-    {"id": "fintech",    "name": "Fintech",     "query": "Wealthsimple Koho Neo Financial Canadian fintech news"},
+TOPICS = [
+    {"id": "open_banking", "name": "Open Banking",  "query": "open banking Canada regulation news 2025 2026"},
+    {"id": "stablecoin",   "name": "Stablecoin",    "query": "stablecoin crypto Canada regulation bank news 2025 2026"},
+    {"id": "ai_banking",   "name": "AI & Banking",  "query": "artificial intelligence AI banking Canada fintech 2025 2026"},
+    {"id": "regulation",   "name": "Regulation",    "query": "OSFI Bank of Canada banking regulation policy news 2025 2026"},
+    {"id": "big_banks",    "name": "Big Banks",     "query": "RBC TD BMO Scotiabank CIBC Canada bank news strategy 2025 2026"},
+    {"id": "fintech",      "name": "Fintech",       "query": "Wealthsimple Koho Neo Financial Canadian fintech startup 2025 2026"},
+    {"id": "payments",     "name": "Payments",      "query": "Canada payments real-time rail Interac digital payments news 2025 2026"},
 ]
 
-VOICE_HOST_A   = "ko-KR-Wavenet-A"   # 여성
-VOICE_HOST_B   = "ko-KR-Wavenet-C"   # 남성
+VOICE_EN_A = "en-US-Wavenet-F"   # 영어 여성
+VOICE_EN_B = "en-US-Wavenet-D"   # 영어 남성
+
 TARGET_MINUTES = 30
-OUTPUT_DIR     = "docs/data"
+OUTPUT_DIR = "docs/data"
 
 # ── API KEYS ──────────────────────────────────────────────────────────────────
 
 ANTHROPIC_API_KEY  = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_TTS_API_KEY = os.environ["GOOGLE_TTS_API_KEY"]
-EMAIL_ADDRESS      = os.environ.get("EMAIL_ADDRESS", "")
-EMAIL_PASSWORD     = os.environ.get("EMAIL_PASSWORD", "")
-EMAIL_TO           = os.environ.get("EMAIL_TO", "")
 
 client = Anthropic()
 
-# ── STEP 1: NEWS COLLECTION VIA CLAUDE WEB SEARCH ────────────────────────────
+# ── STEP 1: NEWS COLLECTION ───────────────────────────────────────────────────
 
-def search_institution_news(institution: dict) -> list:
-    """Claude Web Search로 기관별 최신 뉴스 수집"""
-    print(f"[INFO] Searching: {institution['name']}...")
+def strip_markdown(text: str) -> str:
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*',     r'\1', text)
+    text = re.sub(r'__(.+?)__',     r'\1', text)
+    text = re.sub(r'_(.+?)_',       r'\1', text)
+    return text.strip()
 
+
+def search_topic_news(topic: dict) -> list:
+    print(f"[INFO] Searching: {topic['name']}...")
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=2000,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{
-            "role": "user",
-            "content": f"""Search for the latest news (last 24 hours) about: {institution['query']}
+        messages=[{"role": "user", "content": f"""Search for recent news (last 7 days) about: {topic['query']}
 
-Return results as a JSON array only, no other text:
+Return as JSON array only, no other text:
 [
   {{
     "title": "article title",
-    "summary": "2-3 sentence summary of the article",
+    "summary": "2-3 sentence plain text summary. No markdown, no asterisks.",
     "url": "article url",
     "source": "publication name",
-    "published": "relative time like '2h ago' or '5h ago'"
+    "published": "relative time like '2h ago', '1 day ago', '3 days ago'"
   }}
 ]
 
-Include only genuinely newsworthy items (not PR fluff).
-Maximum 6 articles. If no recent news found, return empty array [].
-"""
-        }]
+Rules: plain text only, newsworthy items only, skip PR, max 6 articles, return [] if none.
+"""}]
     )
 
-    # 응답에서 텍스트 추출
-    text = ""
-    for block in response.content:
-        if hasattr(block, "text"):
-            text += block.text
-
-    # JSON 파싱
+    text = "".join(b.text for b in response.content if hasattr(b, "text"))
     try:
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if json_match:
-            articles = json.loads(json_match.group())
-            print(f"[INFO] {institution['name']}: {len(articles)} articles found")
-            return articles
+        m = re.search(r'\[.*\]', text, re.DOTALL)
+        articles = json.loads(m.group() if m else text)
+        for a in articles:
+            a["summary"] = strip_markdown(a.get("summary", ""))
+            a["title"]   = strip_markdown(a.get("title", ""))
+        print(f"[INFO] {topic['name']}: {len(articles)} articles")
+        return articles
     except Exception as e:
-        print(f"[WARN] Parse error for {institution['name']}: {e}")
-
-    return []
-
-
-# ── STEP 2: TOPIC CLUSTERING PER INSTITUTION ─────────────────────────────────
-
-def cluster_articles(institution_name: str, articles: list) -> list:
-    """기사들을 주제별로 클러스터링"""
-    if not articles:
+        print(f"[WARN] {topic['name']} parse error: {e}")
         return []
 
-    articles_text = "\n".join([
-        f"- {a['title']}: {a['summary']}"
-        for a in articles
-    ])
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
-        messages=[{
-            "role": "user",
-            "content": f"""Group these {institution_name} news articles into topic clusters.
+# ── STEP 2: SUMMARIES ─────────────────────────────────────────────────────────
 
-Articles:
-{articles_text}
-
-Return as JSON array only:
-[
-  {{
-    "topic": "short topic name (e.g. 'AI & Digital', 'Regulatory', 'Retail Banking')",
-    "articles": [0, 2]  // index numbers from original list
-  }}
-]
-
-Use 1-4 clusters max. Each article goes in exactly one cluster.
-"""
-        }]
-    )
-
-    text = response.content[0].text
-    try:
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if json_match:
-            clusters_raw = json.loads(json_match.group())
-            # 클러스터에 실제 기사 데이터 삽입
-            clusters = []
-            for c in clusters_raw:
-                cluster_articles = [articles[i] for i in c["articles"] if i < len(articles)]
-                if cluster_articles:
-                    clusters.append({
-                        "topic": c["topic"],
-                        "articles": cluster_articles
-                    })
-            return clusters
-    except Exception as e:
-        print(f"[WARN] Clustering error: {e}")
-
-    # 클러스터링 실패 시 단일 클러스터로
-    return [{"topic": "News", "articles": articles}]
-
-
-# ── STEP 3: GENERATE SUMMARIES (EN + KO) ─────────────────────────────────────
-
-def generate_daily_summary(all_articles: list) -> dict:
-    """전체 기사로 일일 요약 생성 (영어 + 한국어)"""
+def generate_daily_summary(all_articles: list) -> str:
     articles_text = "\n".join([
         f"- [{a.get('source','')}] {a['title']}: {a['summary']}"
         for a in all_articles[:40]
     ])
-
     today = datetime.now().strftime("%B %d, %Y")
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=3000,
-        messages=[{
-            "role": "user",
-            "content": f"""Today is {today}. Analyze these {INDUSTRY} news articles.
+        max_tokens=2000,
+        messages=[{"role": "user", "content": f"""Today is {today}. Analyze these {INDUSTRY} news from the past week.
 
 {articles_text}
 
-Generate TWO summaries:
+Write a plain-text briefing. NO markdown, NO asterisks, NO bold formatting.
 
-===ENGLISH===
-Write a structured briefing with sections:
+Use these section headers with emoji (no asterisks around them):
 🔴 URGENT — Regulatory or immediate competitive moves
 🔵 COMPETITOR MOVES — Notable competitor actions
 🟢 FINTECH & INNOVATION — New products, tech trends
 🟡 MACRO & GLOBAL — Broader financial signals
 
-Each item: one-line summary + why it matters. Max 400 words total.
-
-===KOREAN===
-위 내용을 한국어로 동일한 구조로 작성해주세요. 자연스러운 한국어로.
-"""
-        }]
+Under each section, bullet points starting with •
+Each bullet: one-line summary. Next line: "Why it matters: [reason]"
+Plain text only. Max 400 words total.
+"""}]
     )
-
-    text = response.content[0].text
-    try:
-        en = text.split("===ENGLISH===")[1].split("===KOREAN===")[0].strip()
-        ko = text.split("===KOREAN===")[1].strip()
-        return {"en": en, "ko": ko}
-    except:
-        return {"en": text, "ko": text}
+    return strip_markdown(response.content[0].text.strip())
 
 
-def generate_institution_summary(institution_name: str, articles: list) -> dict:
-    """기관별 요약 (영어 + 한국어)"""
+def generate_topic_summary(topic_name: str, articles: list) -> str:
     if not articles:
-        return {"en": "No recent news.", "ko": "최근 뉴스가 없습니다."}
-
+        return "No recent news this week."
     articles_text = "\n".join([f"- {a['title']}: {a['summary']}" for a in articles])
-
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        messages=[{
-            "role": "user",
-            "content": f"""Summarize these {institution_name} news articles for a financial professional.
+        max_tokens=500,
+        messages=[{"role": "user", "content": f"""Summarize these {topic_name} articles in 2-3 sentences for a financial professional.
+Plain text only, no markdown, no bold, no asterisks.
 
 {articles_text}
-
-===ENGLISH===
-2-3 sentence analytical summary. What's the strategic significance?
-
-===KOREAN===
-위 내용을 한국어 2-3문장으로 요약해주세요.
-"""
-        }]
+"""}]
     )
-
-    text = response.content[0].text
-    try:
-        en = text.split("===ENGLISH===")[1].split("===KOREAN===")[0].strip()
-        ko = text.split("===KOREAN===")[1].strip()
-        return {"en": en, "ko": ko}
-    except:
-        return {"en": text, "ko": text}
+    return strip_markdown(response.content[0].text.strip())
 
 
-# ── STEP 4: PODCAST SCRIPT + AUDIO ───────────────────────────────────────────
+# ── STEP 3: PODCAST SCRIPT (ENGLISH) ─────────────────────────────────────────
 
 def generate_podcast_script(all_articles: list) -> list:
-    """2인 한국어 팟캐스트 스크립트 생성"""
     articles_text = "\n".join([
         f"- {a['title']}: {a['summary']}"
         for a in all_articles[:30]
     ])
-
     today = datetime.now().strftime("%B %d, %Y")
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=8000,
-        messages=[{
-            "role": "user",
-            "content": f"""Today is {today}. Create a Korean podcast script for {INDUSTRY} professionals.
+        messages=[{"role": "user", "content": f"""Today is {today}. Create an English podcast for {INDUSTRY} professionals.
 
-News:
+News from this week:
 {articles_text}
 
-Write a natural Korean conversation for {TARGET_MINUTES} minutes (~{TARGET_MINUTES * 140} characters).
+Write a natural English conversation for {TARGET_MINUTES} minutes (~{TARGET_MINUTES * 130} words total).
 
-Host A (진행자 A): 분석적이고 전문적인 톤, 여성
-Host B (진행자 B): 친근하고 통찰력 있는 톤, 남성
+Host A: Analytical and professional tone, female
+Host B: Insightful and conversational tone, male
 
-Return ONLY a JSON array:
+Return ONLY a JSON array, no other text:
 [
-  {{"speaker": "A", "text": "안녕하세요..."}},
-  {{"speaker": "B", "text": "네, 오늘은..."}}
+  {{"speaker": "A", "text": "Welcome to the Industry Briefing..."}},
+  {{"speaker": "B", "text": "Thanks. This week has been..."}}
 ]
 
 Requirements:
-- Natural Korean speech (not overly formal)
-- Cover all major topics
-- Include strategic analysis ("CIBC 입장에서는...")
-- Engaging intro and wrap-up
+- Natural conversational English
+- Cover all major topics from the week
+- Include strategic insights (e.g. "From a competitive standpoint...")
+- Engaging intro + strong wrap-up with key takeaways
 - NO text outside the JSON array
-"""
-        }]
+"""}]
     )
-
     text = response.content[0].text
     try:
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        lines = json.loads(json_match.group() if json_match else text)
+        m = re.search(r'\[.*\]', text, re.DOTALL)
+        lines = json.loads(m.group() if m else text)
         print(f"[INFO] Podcast script: {len(lines)} lines")
         return lines
     except Exception as e:
-        print(f"[ERROR] Script parse error: {e}")
+        print(f"[ERROR] Script parse: {e}")
         return []
 
 
-def text_to_speech(text: str, voice_name: str) -> bytes:
+# ── STEP 4: TTS ───────────────────────────────────────────────────────────────
+
+def tts(text: str, voice: str) -> bytes:
     resp = requests.post(
         f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GOOGLE_TTS_API_KEY}",
         json={
             "input": {"text": text},
-            "voice": {"languageCode": "ko-KR", "name": voice_name,
-                      "ssmlGender": "FEMALE" if voice_name.endswith("A") else "MALE"},
+            "voice": {"languageCode": "en-US", "name": voice,
+                      "ssmlGender": "FEMALE" if voice.endswith("F") else "MALE"},
             "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.05}
-        },
-        timeout=30
+        }, timeout=30
     )
     resp.raise_for_status()
     return base64.b64decode(resp.json()["audioContent"])
 
 
-def build_audio(podcast_lines: list) -> bytes:
-    combined    = AudioSegment.empty()
-    pause_short = AudioSegment.silent(duration=400)
-    pause_long  = AudioSegment.silent(duration=800)
-
-    for i, line in enumerate(podcast_lines):
-        speaker = line.get("speaker", "A")
-        text    = line.get("text", "").strip()
+def build_audio(lines: list) -> bytes:
+    combined = AudioSegment.empty()
+    for i, line in enumerate(lines):
+        text = line.get("text", "").strip()
         if not text:
             continue
-        voice = VOICE_HOST_A if speaker == "A" else VOICE_HOST_B
-        print(f"[INFO] TTS {i+1}/{len(podcast_lines)} ({speaker}): {text[:40]}...")
+        voice = VOICE_EN_A if line.get("speaker") == "A" else VOICE_EN_B
+        print(f"[INFO] TTS {i+1}/{len(lines)}: {text[:50]}...")
         try:
-            seg = AudioSegment.from_mp3(BytesIO(text_to_speech(text, voice)))
-            combined += seg + pause_short
+            seg = AudioSegment.from_mp3(BytesIO(tts(text, voice)))
+            combined += seg + AudioSegment.silent(duration=400)
             time.sleep(0.3)
         except Exception as e:
             print(f"[WARN] TTS failed line {i}: {e}")
-            combined += pause_long
-
+            combined += AudioSegment.silent(duration=800)
     out = BytesIO()
     combined.export(out, format="mp3", bitrate="128k")
     return out.getvalue()
 
 
-# ── STEP 5: SAVE JSON + MP3 ───────────────────────────────────────────────────
+# ── STEP 5: SAVE ──────────────────────────────────────────────────────────────
 
-def save_outputs(date_str: str, data: dict, mp3_bytes: bytes):
+def save(date_str: str, data: dict, mp3: bytes):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs("docs/audio", exist_ok=True)
 
-    # JSON 데이터 저장
-    json_path = f"{OUTPUT_DIR}/{date_str}.json"
-    with open(json_path, "w", encoding="utf-8") as f:
+    with open(f"{OUTPUT_DIR}/{date_str}.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] Saved: {json_path}")
 
-    # MP3 저장
-    mp3_path = f"docs/audio/{date_str}.mp3"
-    with open(mp3_path, "wb") as f:
-        f.write(mp3_bytes)
-    print(f"[INFO] Saved: {mp3_path} ({len(mp3_bytes)//1024}KB)")
+    if mp3:
+        with open(f"docs/audio/{date_str}.mp3", "wb") as f:
+            f.write(mp3)
+        print(f"[INFO] Audio: {len(mp3)//1024}KB")
 
-    # index.json 업데이트 (날짜 목록)
-    index_path = f"{OUTPUT_DIR}/index.json"
+    idx_path = f"{OUTPUT_DIR}/index.json"
     try:
-        with open(index_path) as f:
-            index = json.load(f)
+        with open(idx_path) as f:
+            idx = json.load(f)
     except:
-        index = {"dates": []}
-
-    if date_str not in index["dates"]:
-        index["dates"].insert(0, date_str)
-        index["dates"] = index["dates"][:30]  # 최근 30일만 유지
-
-    with open(index_path, "w") as f:
-        json.dump(index, f, indent=2)
-    print(f"[INFO] Updated index.json")
+        idx = {"dates": []}
+    if date_str not in idx["dates"]:
+        idx["dates"].insert(0, date_str)
+        idx["dates"] = idx["dates"][:30]
+    with open(idx_path, "w") as f:
+        json.dump(idx, f, indent=2)
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
 def main():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    print(f"\n{'='*50}\nIndustry Briefing v2 — {date_str}\n{'='*50}\n")
+    print(f"\n{'='*50}\nIndustry Briefing v2.3 — {date_str}\n{'='*50}\n")
 
-    # 1. 기관별 뉴스 수집 + 클러스터링
-    institutions_data = []
-    all_articles = []
-
-    for inst in INSTITUTIONS:
-        articles = search_institution_news(inst)
+    # 1. 주제별 뉴스 수집
+    topics_data, all_articles = [], []
+    for topic in TOPICS:
+        articles = search_topic_news(topic)
         all_articles.extend(articles)
-
-        clusters = cluster_articles(inst["name"], articles) if articles else []
-        summary  = generate_institution_summary(inst["name"], articles)
-
-        institutions_data.append({
-            "id":       inst["id"],
-            "name":     inst["name"],
+        summary = generate_topic_summary(topic["name"], articles)
+        topics_data.append({
+            "id":       topic["id"],
+            "name":     topic["name"],
             "summary":  summary,
-            "clusters": clusters,
+            "articles": articles,
             "count":    len(articles),
         })
-        time.sleep(1)  # rate limit
-
-    print(f"[INFO] Total articles: {len(all_articles)}")
+        time.sleep(1)
+    print(f"[INFO] Total: {len(all_articles)} articles")
 
     # 2. 일일 요약
-    daily_summary = generate_daily_summary(all_articles) if all_articles else {
-        "en": "No significant news today.",
-        "ko": "오늘은 주요 뉴스가 없습니다."
-    }
+    daily_summary = generate_daily_summary(all_articles) if all_articles else \
+        "No significant news this week."
 
-    # 3. 팟캐스트 스크립트 + 오디오
-    podcast_lines = generate_podcast_script(all_articles) if all_articles else []
-    mp3_bytes = build_audio(podcast_lines) if podcast_lines else b""
+    # 3. 팟캐스트 + 오디오
+    script = generate_podcast_script(all_articles) if all_articles else []
+    mp3 = build_audio(script) if script else b""
 
-    # 4. JSON 데이터 구조 조립
+    # 4. 저장
+    urgent_kw = ["osfi","regulation","regulator","fine","penalty","warning","enforcement"]
     data = {
-        "date":         date_str,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "date":           date_str,
+        "generated_at":   datetime.now(timezone.utc).isoformat(),
         "total_articles": len(all_articles),
-        "urgent_count": sum(1 for a in all_articles if any(
-            w in a.get("title","").lower()
-            for w in ["osfi","regulation","regulator","fine","penalty","warning"]
-        )),
-        "summary": daily_summary,
-        "institutions": institutions_data,
-        "audio_url": f"audio/{date_str}.mp3",
+        "urgent_count":   sum(1 for a in all_articles if any(
+            w in a.get("title","").lower() for w in urgent_kw)),
+        "summary":        daily_summary,
+        "topics":         topics_data,
+        "audio_url":      f"audio/{date_str}.mp3" if mp3 else "",
         "audio_duration": f"{TARGET_MINUTES}:00",
     }
-
-    # 5. 저장
-    save_outputs(date_str, data, mp3_bytes)
-    print("\n[DONE] Briefing complete!")
+    save(date_str, data, mp3)
+    print("\n[DONE] Complete!")
 
 
 if __name__ == "__main__":

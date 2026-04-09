@@ -51,11 +51,14 @@ def strip_markdown(text: str) -> str:
 
 def search_topic_news(topic: dict) -> list:
     print(f"[INFO] Searching: {topic['name']}...")
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": f"""Search for recent news (last 7 days) about: {topic['query']}
+    for attempt in range(3):
+        try:
+            time.sleep(15 * (attempt + 1))  # 15초, 30초, 45초 대기
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": f"""Search for recent news (last 7 days) about: {topic['query']}
 
 Return as JSON array only, no other text:
 [
@@ -70,20 +73,24 @@ Return as JSON array only, no other text:
 
 Rules: plain text only, newsworthy items only, skip PR, max 6 articles, return [] if none.
 """}]
-    )
-
-    text = "".join(b.text for b in response.content if hasattr(b, "text"))
-    try:
-        m = re.search(r'\[.*\]', text, re.DOTALL)
-        articles = json.loads(m.group() if m else text)
-        for a in articles:
-            a["summary"] = strip_markdown(a.get("summary", ""))
-            a["title"]   = strip_markdown(a.get("title", ""))
-        print(f"[INFO] {topic['name']}: {len(articles)} articles")
-        return articles
-    except Exception as e:
-        print(f"[WARN] {topic['name']} parse error: {e}")
-        return []
+            )
+            text = "".join(b.text for b in response.content if hasattr(b, "text"))
+            try:
+                m = re.search(r'\[.*\]', text, re.DOTALL)
+                articles = json.loads(m.group() if m else text)
+                for a in articles:
+                    a["summary"] = strip_markdown(a.get("summary", ""))
+                    a["title"]   = strip_markdown(a.get("title", ""))
+                print(f"[INFO] {topic['name']}: {len(articles)} articles")
+                return articles
+            except Exception as e:
+                print(f"[WARN] {topic['name']} parse error: {e}")
+                return []
+        except Exception as e:
+            print(f"[WARN] Attempt {attempt+1} failed for {topic['name']}: {e}")
+            if attempt == 2:
+                return []
+    return []
 
 
 # ── STEP 2: SUMMARIES ─────────────────────────────────────────────────────────
@@ -208,7 +215,7 @@ def build_audio(lines: list) -> bytes:
         try:
             seg = AudioSegment.from_mp3(BytesIO(tts(text, voice)))
             combined += seg + AudioSegment.silent(duration=400)
-            time.sleep(0.3)
+            time.sleep(8)
         except Exception as e:
             print(f"[WARN] TTS failed line {i}: {e}")
             combined += AudioSegment.silent(duration=800)
@@ -263,7 +270,7 @@ def main():
             "articles": articles,
             "count":    len(articles),
         })
-        time.sleep(8)
+        time.sleep(20)
     print(f"[INFO] Total: {len(all_articles)} articles")
 
     # 2. 일일 요약

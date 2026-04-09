@@ -263,7 +263,7 @@ def main():
             "articles": articles,
             "count":    len(articles),
         })
-        time.sleep(1)
+        time.sleep(8)
     print(f"[INFO] Total: {len(all_articles)} articles")
 
     # 2. 일일 요약

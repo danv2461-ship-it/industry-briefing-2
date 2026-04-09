@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Industry Briefing</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff; --bg2: #f5f4f0; --bg3: #eeedea;
+    --text: #1a1a18; --text2: #5f5e5a; --text3: #8f8e89;
+    --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18);
+    --blue-bg: #e6f1fb; --blue: #185fa5; --blue-border: #85b7eb;
+    --red: #e24b4a; --teal: #1d9e75; --amber: #ba7517;
+    --radius: 12px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a; --bg2: #242422; --bg3: #2c2c2a;
+      --text: #e8e6e0; --text2: #a0a09a; --text3: #6a6a64;
+      --border: rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.18);
+      --blue-bg: #0c2a44; --blue: #85b7eb; --blue-border: #185fa5;
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg2); color: var(--text); min-height: 100vh; }
+  .container { max-width: 600px; margin: 0 auto; padding: 16px; }
+
+  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 0 14px; border-bottom: 0.5px solid var(--border); margin-bottom: 16px; }
+  .logo { font-size: 15px; font-weight: 500; }
+  .date-nav { display: flex; align-items: center; gap: 8px; }
+  .nav-btn { background: var(--bg); border: 0.5px solid var(--border2); border-radius: 6px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 13px; color: var(--text2); }
+  .nav-btn:hover { background: var(--bg3); }
+  .nav-btn:disabled { opacity: 0.3; cursor: default; }
+  .date-label { font-size: 12px; font-weight: 500; color: var(--text); min-width: 80px; text-align: center; }
+
+  .card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+
+  .audio-label { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
+  .audio-title { font-size: 15px; font-weight: 500; margin-bottom: 14px; }
+  .player { display: flex; align-items: center; gap: 10px; }
+  .play-btn { width: 34px; height: 34px; border-radius: 50%; background: var(--text); border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+  .play-icon { width: 0; height: 0; border: solid transparent; border-width: 6px 0 6px 11px; border-left-color: var(--bg); margin-left: 2px; }
+  .pause-icon { display: flex; gap: 3px; align-items: center; }
+  .pause-bar { width: 3px; height: 11px; background: var(--bg); border-radius: 1px; }
+  .progress-wrap { flex: 1; cursor: pointer; }
+  .progress-track { height: 3px; background: var(--border2); border-radius: 2px; }
+  .progress-fill { height: 100%; background: var(--text); border-radius: 2px; width: 0%; }
+  .time-row { display: flex; justify-content: space-between; margin-top: 4px; }
+  .time-label { font-size: 10px; color: var(--text3); }
+  .speed-btn { font-size: 11px; font-weight: 500; color: var(--text2); border: 0.5px solid var(--border2); border-radius: 6px; padding: 5px 9px; background: none; cursor: pointer; }
+
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .metric { background: var(--bg2); border-radius: var(--radius-sm); padding: 10px 12px; }
+  .metric-val { font-size: 20px; font-weight: 500; }
+  .metric-lbl { font-size: 10px; color: var(--text3); margin-top: 1px; }
+
+  .section-title { font-size: 13px; font-weight: 500; margin-bottom: 10px; }
+  .summary-text { font-size: 12px; color: var(--text2); line-height: 1.75; white-space: pre-wrap; }
+
+  .news-item { display: flex; gap: 9px; padding: 9px 0; border-top: 0.5px solid var(--border); align-items: flex-start; cursor: pointer; text-decoration: none; color: inherit; }
+  .news-item:hover .item-title { color: var(--blue); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+  .d-red { background: var(--red); }
+  .d-blue { background: #378add; }
+  .d-teal { background: var(--teal); }
+  .d-amber { background: var(--amber); }
+  .d-gray { background: var(--text3); }
+  .item-body { flex: 1; }
+  .item-title { font-size: 12px; font-weight: 500; color: var(--text); line-height: 1.4; transition: color 0.15s; }
+  .item-sub { font-size: 11px; color: var(--text2); margin-top: 2px; line-height: 1.4; }
+  .item-meta { font-size: 10px; color: var(--text3); margin-top: 2px; }
+  .item-arrow { font-size: 11px; color: var(--text3); flex-shrink: 0; margin-top: 4px; }
+
+  .topic-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 12px; }
+  .topic-header { padding: 14px 16px 0; }
+  .topic-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 12px; scrollbar-width: none; }
+  .topic-tabs::-webkit-scrollbar { display: none; }
+  .topic-tab { font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: 20px; border: 0.5px solid var(--border2); color: var(--text2); white-space: nowrap; cursor: pointer; background: none; flex-shrink: 0; }
+  .topic-tab.active { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-border); }
+  .topic-divider { height: 0.5px; background: var(--border); }
+  .topic-body { padding: 14px 16px; }
+  .topic-summary { font-size: 12px; color: var(--text2); line-height: 1.65; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 0.5px solid var(--border); }
+
+  .loading { text-align: center; padding: 40px 20px; color: var(--text3); font-size: 13px; }
+  .empty { text-align: center; padding: 16px; color: var(--text3); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="logo">Industry Briefing</div>
+    <div class="date-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">←</button>
+      <div class="date-label" id="date-label">Loading...</div>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)" disabled>→</button>
+    </div>
+  </div>
+
+  <div id="main-content"><div class="loading">Loading briefing...</div></div>
+</div>
+
+<script>
+const BASE = '.';
+let dates = [], currentIdx = 0, currentData = null;
+let audioEl = null, speeds = [1, 1.5, 2], speedIdx = 0;
+let currentTopicIdx = 0;
+
+async function init() {
+  try {
+    const res = await fetch(`${BASE}/data/index.json`);
+    const idx = await res.json();
+    dates = idx.dates || [];
+    if (!dates.length) {
+      document.getElementById('main-content').innerHTML = '<div class="loading">No briefings yet. Run the workflow first.</div>';
+      return;
+    }
+    loadDate(dates[0]);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = '<div class="loading">No data found. Run the GitHub Actions workflow first.</div>';
+  }
+}
+
+async function loadDate(date) {
+  document.getElementById('date-label').textContent = formatDate(date);
+  document.getElementById('prev-btn').disabled = currentIdx >= dates.length - 1;
+  document.getElementById('next-btn').disabled = currentIdx <= 0;
+  document.getElementById('main-content').innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const res = await fetch(`${BASE}/data/${date}.json`);
+    currentData = await res.json();
+    currentTopicIdx = 0;
+    render();
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = `<div class="loading">Failed to load ${date}</div>`;
+  }
+}
+
+function navigate(dir) {
+  currentIdx = Math.max(0, Math.min(dates.length - 1, currentIdx + dir));
+  loadDate(dates[currentIdx]);
+}
+
+function formatDate(d) {
+  const today = new Date().toISOString().slice(0,10);
+  if (d === today) return 'Today';
+  const dt = new Date(d + 'T12:00:00');
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function getDotClass(title, topicId) {
+  const t = (title || '').toLowerCase();
+  if (topicId === 'regulation' || t.includes('osfi') || t.includes('regulat') || t.includes('fine') || t.includes('penalty')) return 'd-red';
+  if (topicId === 'big_banks') return 'd-blue';
+  if (topicId === 'ai_banking') return 'd-amber';
+  if (topicId === 'fintech' || topicId === 'open_banking' || topicId === 'stablecoin' || topicId === 'payments') return 'd-teal';
+  return 'd-gray';
+}
+
+function render() {
+  const d = currentData;
+  let html = '';
+
+  // Audio player
+  html += `<div class="card">
+    <div class="audio-label">This week's podcast</div>
+    <div class="audio-title">Morning briefing — ${formatDate(d.date)}</div>
+    <div class="player">
+      <button class="play-btn" onclick="togglePlay()">
+        <div class="play-icon" id="play-icon"></div>
+      </button>
+      <div class="progress-wrap" onclick="seekAudio(event)">
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="time-row">
+          <span class="time-label" id="time-cur">0:00</span>
+          <span class="time-label" id="time-tot">${d.audio_duration || '30:00'}</span>
+        </div>
+      </div>
+      <button class="speed-btn" id="speed-btn" onclick="cycleSpeed()">1x</button>
+    </div>
+  </div>`;
+
+  // Weekly summary
+  html += `<div class="card">
+    <div class="section-title">Weekly summary</div>
+    <div class="metrics">
+      <div class="metric"><div class="metric-val">${d.total_articles||0}</div><div class="metric-lbl">Articles</div></div>
+      <div class="metric"><div class="metric-val">${d.urgent_count||0}</div><div class="metric-lbl">Urgent</div></div>
+      <div class="metric"><div class="metric-val">${(d.topics||[]).filter(t=>t.count>0).length}</div><div class="metric-lbl">Topics</div></div>
+    </div>
+    <div class="summary-text">${(d.summary || '').trim()}</div>
+  </div>`;
+
+  // Topic tabs
+  const topics = d.topics || [];
+  if (topics.length) {
+    html += `<div class="topic-card">
+      <div class="topic-header">
+        <div class="section-title">By topic</div>
+        <div class="topic-tabs" id="topic-tabs">`;
+    topics.forEach((t, i) => {
+      html += `<button class="topic-tab${i===0?' active':''}" onclick="showTopic(${i})">${t.name}${t.count>0?` (${t.count})`:''}</button>`;
+    });
+    html += `</div></div><div class="topic-divider"></div>
+      <div class="topic-body" id="topic-body">${renderTopic(topics[0])}</div>
+    </div>`;
+  }
+
+  document.getElementById('main-content').innerHTML = html;
+  initAudio(d);
+}
+
+function renderTopic(topic) {
+  if (!topic) return '';
+  const summary = topic.summary || 'No recent news this week.';
+  let html = `<div class="topic-summary">${summary}</div>`;
+  const articles = topic.articles || [];
+  if (!articles.length) {
+    html += `<div class="empty">No news this week.</div>`;
+  } else {
+    articles.forEach(a => {
+      const dot = getDotClass(a.title, topic.id);
+      const meta = [a.source, a.published].filter(Boolean).join(' · ');
+      html += `<a class="news-item" href="${a.url||'#'}" target="_blank" rel="noopener">
+        <div class="dot ${dot}"></div>
+        <div class="item-body">
+          <div class="item-title">${a.title}</div>
+          ${a.summary ? `<div class="item-sub">${a.summary}</div>` : ''}
+          ${meta ? `<div class="item-meta">${meta}</div>` : ''}
+        </div>
+        <div class="item-arrow">↗</div>
+      </a>`;
+    });
+  }
+  return html;
+}
+
+function showTopic(idx) {
+  currentTopicIdx = idx;
+  document.querySelectorAll('.topic-tab').forEach((t,i) => t.classList.toggle('active', i===idx));
+  const body = document.getElementById('topic-body');
+  if (body) body.innerHTML = renderTopic((currentData?.topics||[])[idx]);
+}
+
+// Audio
+function initAudio(d) {
+  if (audioEl) { audioEl.pause(); audioEl = null; }
+  if (!d.audio_url) return;
+  audioEl = new Audio(`${BASE}/${d.audio_url}`);
+  audioEl.ontimeupdate = updateProgress;
+  audioEl.onended = () => setPlayIcon(false);
+}
+
+function togglePlay() {
+  if (!audioEl) return;
+  if (audioEl.paused) { audioEl.play(); setPlayIcon(true); }
+  else { audioEl.pause(); setPlayIcon(false); }
+}
+
+function setPlayIcon(playing) {
+  const el = document.getElementById('play-icon');
+  if (!el) return;
+  el.outerHTML = playing
+    ? '<div class="pause-icon" id="play-icon"><div class="pause-bar"></div><div class="pause-bar"></div></div>'
+    : '<div class="play-icon" id="play-icon"></div>';
+}
+
+function updateProgress() {
+  if (!audioEl?.duration) return;
+  const pct = (audioEl.currentTime / audioEl.duration * 100).toFixed(1);
+  const fill = document.getElementById('progress-fill');
+  if (fill) fill.style.width = pct + '%';
+  const cur = document.getElementById('time-cur');
+  if (cur) cur.textContent = fmtTime(audioEl.currentTime);
+  const tot = document.getElementById('time-tot');
+  if (tot) tot.textContent = fmtTime(audioEl.duration);
+}
+
+function seekAudio(e) {
+  if (!audioEl?.duration) return;
+  const track = e.currentTarget.querySelector('.progress-track');
+  const rect = track.getBoundingClientRect();
+  audioEl.currentTime = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * audioEl.duration;
+}
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % speeds.length;
+  if (audioEl) audioEl.playbackRate = speeds[speedIdx];
+  const btn = document.getElementById('speed-btn');
+  if (btn) btn.textContent = speeds[speedIdx] + 'x';
+}
+
+function fmtTime(s) {
+  if (!s || isNaN(s)) return '0:00';
+  return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
+}
+
+init();
+</script>
+</body>
+</html>

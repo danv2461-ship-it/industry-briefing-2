@@ -128,6 +128,7 @@ Plain text only. Max 400 words total.
 def generate_topic_summary(topic_name: str, articles: list) -> str:
     if not articles:
         return "No recent news this week."
+    time.sleep(15)
     articles_text = "\n".join([f"- {a['title']}: {a['summary']}" for a in articles])
     response = client.messages.create(
         model="claude-sonnet-4-20250514",

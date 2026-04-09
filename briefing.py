@@ -1,14 +1,15 @@
 """
-Industry Intelligence Briefing v2.3
+Industry Intelligence Briefing v2.4
 - English only podcast + dashboard
 - 7-day news window
 - By topic (Open Banking, Stablecoin, AI, etc.)
 - Plain text summaries (no markdown)
+- Auto-retry on rate limit errors
 """
 
 import os, re, json, time, base64, requests
 from datetime import datetime, timezone
-from anthropic import Anthropic
+from anthropic import Anthropic, RateLimitError
 from pydub import AudioSegment
 from io import BytesIO
 
@@ -17,13 +18,13 @@ from io import BytesIO
 INDUSTRY = "Canadian Banking & Fintech"
 
 TOPICS = [
-    {"id": "open_banking", "name": "Open Banking",  "query": "open banking Canada regulation news 2025 2026"},
-    {"id": "stablecoin",   "name": "Stablecoin",    "query": "stablecoin crypto Canada regulation bank news 2025 2026"},
-    {"id": "ai_banking",   "name": "AI & Banking",  "query": "artificial intelligence AI banking Canada fintech 2025 2026"},
-    {"id": "regulation",   "name": "Regulation",    "query": "OSFI Bank of Canada banking regulation policy news 2025 2026"},
-    {"id": "big_banks",    "name": "Big Banks",     "query": "RBC TD BMO Scotiabank CIBC Canada bank news strategy 2025 2026"},
-    {"id": "fintech",      "name": "Fintech",       "query": "Wealthsimple Koho Neo Financial Canadian fintech startup 2025 2026"},
-    {"id": "payments",     "name": "Payments",      "query": "Canada payments real-time rail Interac digital payments news 2025 2026"},
+    {"id": "open_banking", "name": "Open Banking",  "query": "open banking Canada regulation news this week"},
+    {"id": "stablecoin",   "name": "Stablecoin",    "query": "stablecoin crypto Canada bank regulation news this week"},
+    {"id": "ai_banking",   "name": "AI & Banking",  "query": "artificial intelligence AI banking Canada fintech news this week"},
+    {"id": "regulation",   "name": "Regulation",    "query": "OSFI Bank of Canada banking regulation policy news this week"},
+    {"id": "big_banks",    "name": "Big Banks",     "query": "RBC TD BMO Scotiabank CIBC Canada bank news this week"},
+    {"id": "fintech",      "name": "Fintech",       "query": "Wealthsimple Koho Neo Financial Canadian fintech news this week"},
+    {"id": "payments",     "name": "Payments",      "query": "Canada payments Interac real-time rail digital payments news this week"},
 ]
 
 VOICE_EN_A = "en-US-Wavenet-F"   # 영어 여성
@@ -39,7 +40,7 @@ GOOGLE_TTS_API_KEY = os.environ["GOOGLE_TTS_API_KEY"]
 
 client = Anthropic()
 
-# ── STEP 1: NEWS COLLECTION ───────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def strip_markdown(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
@@ -49,16 +50,45 @@ def strip_markdown(text: str) -> str:
     return text.strip()
 
 
+def claude_call(max_tokens: int, messages: list, tools: list = None) -> str:
+    """Rate limit 에러 시 자동 재시도 (최대 5회, 60초 간격)"""
+    kwargs = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": max_tokens,
+        "messages": messages,
+    }
+    if tools:
+        kwargs["tools"] = tools
+
+    for attempt in range(5):
+        try:
+            response = client.messages.create(**kwargs)
+            # web search 포함된 경우 텍스트만 추출
+            if tools:
+                return "".join(b.text for b in response.content if hasattr(b, "text"))
+            return response.content[0].text
+        except RateLimitError as e:
+            wait = 60 * (attempt + 1)
+            print(f"[WARN] Rate limit hit (attempt {attempt+1}/5). Waiting {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            print(f"[ERROR] API call failed: {e}")
+            if attempt == 4:
+                raise
+            time.sleep(30)
+
+    raise Exception("Max retries exceeded")
+
+
+# ── STEP 1: NEWS COLLECTION ───────────────────────────────────────────────────
+
 def search_topic_news(topic: dict) -> list:
     print(f"[INFO] Searching: {topic['name']}...")
-    for attempt in range(3):
-        try:
-            time.sleep(15 * (attempt + 1))  # 15초, 30초, 45초 대기
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=2000,
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                messages=[{"role": "user", "content": f"""Search for recent news (last 7 days) about: {topic['query']}
+
+    text = claude_call(
+        max_tokens=2000,
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{"role": "user", "content": f"""Search for recent news (last 7 days) about: {topic['query']}
 
 Return as JSON array only, no other text:
 [
@@ -73,24 +103,19 @@ Return as JSON array only, no other text:
 
 Rules: plain text only, newsworthy items only, skip PR, max 6 articles, return [] if none.
 """}]
-            )
-            text = "".join(b.text for b in response.content if hasattr(b, "text"))
-            try:
-                m = re.search(r'\[.*\]', text, re.DOTALL)
-                articles = json.loads(m.group() if m else text)
-                for a in articles:
-                    a["summary"] = strip_markdown(a.get("summary", ""))
-                    a["title"]   = strip_markdown(a.get("title", ""))
-                print(f"[INFO] {topic['name']}: {len(articles)} articles")
-                return articles
-            except Exception as e:
-                print(f"[WARN] {topic['name']} parse error: {e}")
-                return []
-        except Exception as e:
-            print(f"[WARN] Attempt {attempt+1} failed for {topic['name']}: {e}")
-            if attempt == 2:
-                return []
-    return []
+    )
+
+    try:
+        m = re.search(r'\[.*\]', text, re.DOTALL)
+        articles = json.loads(m.group() if m else text)
+        for a in articles:
+            a["summary"] = strip_markdown(a.get("summary", ""))
+            a["title"]   = strip_markdown(a.get("title", ""))
+        print(f"[INFO] {topic['name']}: {len(articles)} articles")
+        return articles
+    except Exception as e:
+        print(f"[WARN] {topic['name']} parse error: {e}")
+        return []
 
 
 # ── STEP 2: SUMMARIES ─────────────────────────────────────────────────────────
@@ -102,8 +127,7 @@ def generate_daily_summary(all_articles: list) -> str:
     ])
     today = datetime.now().strftime("%B %d, %Y")
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    text = claude_call(
         max_tokens=2000,
         messages=[{"role": "user", "content": f"""Today is {today}. Analyze these {INDUSTRY} news from the past week.
 
@@ -111,38 +135,37 @@ def generate_daily_summary(all_articles: list) -> str:
 
 Write a plain-text briefing. NO markdown, NO asterisks, NO bold formatting.
 
-Use these section headers with emoji (no asterisks around them):
+Use these section headers with emoji:
 🔴 URGENT — Regulatory or immediate competitive moves
 🔵 COMPETITOR MOVES — Notable competitor actions
 🟢 FINTECH & INNOVATION — New products, tech trends
 🟡 MACRO & GLOBAL — Broader financial signals
 
-Under each section, bullet points starting with •
+Bullet points starting with •
 Each bullet: one-line summary. Next line: "Why it matters: [reason]"
 Plain text only. Max 400 words total.
 """}]
     )
-    return strip_markdown(response.content[0].text.strip())
+    return strip_markdown(text)
 
 
 def generate_topic_summary(topic_name: str, articles: list) -> str:
     if not articles:
         return "No recent news this week."
-    time.sleep(15)
     articles_text = "\n".join([f"- {a['title']}: {a['summary']}" for a in articles])
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=500,
+
+    text = claude_call(
+        max_tokens=400,
         messages=[{"role": "user", "content": f"""Summarize these {topic_name} articles in 2-3 sentences for a financial professional.
 Plain text only, no markdown, no bold, no asterisks.
 
 {articles_text}
 """}]
     )
-    return strip_markdown(response.content[0].text.strip())
+    return strip_markdown(text)
 
 
-# ── STEP 3: PODCAST SCRIPT (ENGLISH) ─────────────────────────────────────────
+# ── STEP 3: PODCAST SCRIPT ────────────────────────────────────────────────────
 
 def generate_podcast_script(all_articles: list) -> list:
     articles_text = "\n".join([
@@ -151,8 +174,7 @@ def generate_podcast_script(all_articles: list) -> list:
     ])
     today = datetime.now().strftime("%B %d, %Y")
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    text = claude_call(
         max_tokens=8000,
         messages=[{"role": "user", "content": f"""Today is {today}. Create an English podcast for {INDUSTRY} professionals.
 
@@ -178,11 +200,11 @@ Requirements:
 - NO text outside the JSON array
 """}]
     )
-    text = response.content[0].text
+
     try:
         m = re.search(r'\[.*\]', text, re.DOTALL)
         lines = json.loads(m.group() if m else text)
-        print(f"[INFO] Podcast script: {len(lines)} lines")
+        print(f"[INFO] Podcast: {len(lines)} lines")
         return lines
     except Exception as e:
         print(f"[ERROR] Script parse: {e}")
@@ -216,7 +238,7 @@ def build_audio(lines: list) -> bytes:
         try:
             seg = AudioSegment.from_mp3(BytesIO(tts(text, voice)))
             combined += seg + AudioSegment.silent(duration=400)
-            time.sleep(8)
+            time.sleep(0.3)
         except Exception as e:
             print(f"[WARN] TTS failed line {i}: {e}")
             combined += AudioSegment.silent(duration=800)
@@ -256,13 +278,22 @@ def save(date_str: str, data: dict, mp3: bytes):
 
 def main():
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    print(f"\n{'='*50}\nIndustry Briefing v2.3 — {date_str}\n{'='*50}\n")
+    print(f"\n{'='*50}\nIndustry Briefing v2.4 — {date_str}\n{'='*50}\n")
 
-    # 1. 주제별 뉴스 수집
+    # 1. 주제별 뉴스 수집 + 요약
     topics_data, all_articles = [], []
-    for topic in TOPICS:
+    for i, topic in enumerate(TOPICS):
+        # 첫 번째 토픽 제외하고 토픽 사이 대기
+        if i > 0:
+            print(f"[INFO] Waiting 30s before next topic...")
+            time.sleep(30)
+
         articles = search_topic_news(topic)
         all_articles.extend(articles)
+
+        print(f"[INFO] Waiting 20s before summary...")
+        time.sleep(20)
+
         summary = generate_topic_summary(topic["name"], articles)
         topics_data.append({
             "id":       topic["id"],
@@ -271,18 +302,24 @@ def main():
             "articles": articles,
             "count":    len(articles),
         })
-        time.sleep(20)
+
     print(f"[INFO] Total: {len(all_articles)} articles")
 
-    # 2. 일일 요약
+    # 2. 전체 요약
+    print("[INFO] Waiting 30s before daily summary...")
+    time.sleep(30)
     daily_summary = generate_daily_summary(all_articles) if all_articles else \
         "No significant news this week."
 
-    # 3. 팟캐스트 + 오디오
+    # 3. 팟캐스트 스크립트
+    print("[INFO] Waiting 30s before podcast script...")
+    time.sleep(30)
     script = generate_podcast_script(all_articles) if all_articles else []
+
+    # 4. 오디오 생성
     mp3 = build_audio(script) if script else b""
 
-    # 4. 저장
+    # 5. 저장
     urgent_kw = ["osfi","regulation","regulator","fine","penalty","warning","enforcement"]
     data = {
         "date":           date_str,

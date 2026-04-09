@@ -37,6 +37,5 @@ jobs:
           git config user.name "briefing-bot"
           git config user.email "bot@briefing"
           git add docs/
-          git diff --staged --quiet || git commit -m "briefing: $(date +%Y-%m-%d)"
-          git pull --rebase origin main
+          git diff --staged --quiet || (git stash && git pull --rebase origin main && git stash pop && git commit -m "briefing: $(date +%Y-%m-%d)")
           git push
